@@ -1,4 +1,5 @@
 open! Core
+module Url = String
 
 (* [get_linked_articles] should return a list of wikipedia article lengths
    contained in the input.
@@ -14,6 +15,35 @@ open! Core
    results in uniformity in article format. We can expect that all Wikipedia
    article links parsed from a Wikipedia page will have the form
    "/wiki/<TITLE>". *)
+
+module G = Graph.Imperative.Graph.Concrete (Url)
+
+(* We extend our [Graph] structure with the [Dot] API so that we can easily
+   render constructed graphs. Documentation about this API can be found here:
+   https://github.com/backtracking/ocamlgraph/blob/master/src/dot.mli *)
+module Dot = Graph.Graphviz.Dot (struct
+  include G
+
+  (* These functions can be changed to tweak the appearance of the generated
+     graph. Check out the ocamlgraph graphviz API
+     (https://github.com/backtracking/ocamlgraph/blob/master/src/graphviz.mli)
+     for examples of what values can be set here. *)
+  let edge_attributes _ = [ `Dir `None ]
+  let default_edge_attributes _ = []
+  let get_subgraph _ = None
+  let vertex_attributes v = [ `Shape `Box; `Label v; `Fillcolor 1000 ]
+  let vertex_name v = v
+  let default_vertex_attributes _ = []
+  let graph_attributes _ = []
+end)
+
+let rm_url s =
+  String.split s ~on:'/'
+  |> List.last_exn
+  |> String.substr_replace_all ~pattern:"(" ~with_:""
+  |> String.substr_replace_all ~pattern:")" ~with_:""
+;;
+
 let get_linked_articles contents =
   let open Soup in
   parse contents
@@ -52,12 +82,44 @@ let print_links_command =
    a DOT file. It should use the [how_to_fetch] argument along with
    [File_fetcher] to fetch the articles so that the implementation can be
    tested locally on the small dataset in the ../resources/wiki directory. *)
-let visualize ?(max_depth = 3) ~origin ~output_file ~how_to_fetch () : unit =
-  ignore (max_depth : int);
-  ignore (origin : string);
-  ignore (output_file : File_path.t);
-  ignore (how_to_fetch : File_fetcher.How_to_fetch.t);
-  failwith "TODO"
+
+let rec get_pairs ~origin ~parent ~visited ~how_to_fetch ~depth ~max_depth =
+  let n_visited = visited @ [ parent, origin ] in
+  if depth <> max_depth
+  then (
+    let article = File_fetcher.fetch_exn how_to_fetch ~resource:origin in
+    let links = get_linked_articles article in
+    List.fold links ~init:n_visited ~f:(fun acc article ->
+      get_pairs
+        ~origin:article
+        ~parent:origin
+        ~visited:acc
+        ~how_to_fetch
+        ~depth:(depth + 1)
+        ~max_depth))
+  else n_visited
+;;
+
+let visualize ?(max_depth = 3) ~origin ~output_file ~how_to_fetch () =
+  let graph = G.create () in
+  let pairs =
+    get_pairs
+      ~origin
+      ~parent:origin
+      ~visited:[]
+      ~how_to_fetch
+      ~depth:0
+      ~max_depth
+  in
+  List.filter pairs ~f:(fun (parent, origin) ->
+    not (String.equal parent origin))
+  |> List.iter ~f:(fun (parent, origin) ->
+       let parent = rm_url parent in
+       let origin = rm_url origin in
+       G.add_edge graph parent origin);
+  Dot.output_graph
+    (Out_channel.create (File_path.to_string output_file))
+    graph
 ;;
 
 let visualize_command =
