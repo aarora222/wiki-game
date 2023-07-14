@@ -93,6 +93,11 @@ module Network = struct
   ;;
 end
 
+let get_children (network : Network.t) (node : Space.T.t) =
+  List.fold network ~init:[] ~f:(fun li (origin, dest) ->
+    if Space.equal origin node then li @ [ dest ] else li)
+;;
+
 let solve_command =
   let open Command.Let_syntax in
   Command.basic
@@ -105,8 +110,27 @@ let solve_command =
           ~doc:"FILE a file containing a maze"
       in
       fun () ->
-        ignore (input_file : File_path.t);
-        failwith "TODO"]
+        let board = Board.of_file input_file in
+        let network = Network.of_board board in
+        let start_node, _ =
+          List.find_exn network ~f:(fun (start_node, _) ->
+            Char.equal (Map.find_exn board start_node) 'S')
+        in
+        let _, end_node =
+          List.find_exn network ~f:(fun (_, end_node) ->
+            Char.equal (Map.find_exn board end_node) 'E')
+        in
+        let rec dfs curr_node (path : Space.T.t list) =
+          match Space.equal curr_node end_node with
+          | true -> path
+          | false ->
+            let children = get_children network curr_node in
+            List.fold children ~init:[] ~f:(fun li space ->
+              let list = dfs space li in
+              li @ list)
+        in
+        let list = dfs start_node [] in
+        print_s [%message "Path: " (list : Space.T.t list)]]
 ;;
 
 let command =
